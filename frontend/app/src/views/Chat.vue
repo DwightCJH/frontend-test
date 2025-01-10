@@ -1,11 +1,9 @@
 <template>
   <div class="flex flex-col h-screen bg-white">
-    <!-- Header remains the same -->
     <header class="bg-white text-gray-800 p-6 shadow-lg rounded-b-3xl">
       <h1 class="text-3xl font-extrabold text-center text-red-600">AI Tour Guide</h1>
     </header>
 
-    <!-- Main content remains the same -->
     <main class="flex-grow overflow-y-auto p-6 space-y-6">
       <div v-if="messages.length === 0" class="flex items-center justify-center h-full">
         <div class="text-center text-gray-800 space-y-4">
@@ -17,6 +15,7 @@
           <p class="mt-2 text-lg">Start by asking a question or capturing an image.</p>
         </div>
       </div>
+
       <div v-for="(message, index) in messages" :key="index" class="animate-fade-in-up">
         <div
           :class="[
@@ -35,17 +34,19 @@
       </div>
     </main>
 
-    <!-- Updated footer with improved microphone button -->
     <footer class="bg-white border-t border-gray-300 p-6 rounded-t-3xl">
       <div class="flex items-center justify-between mb-4">
         <button
-          @click="toggleRecording"
-          class="relative group"
+          @click="handleMicrophoneClick"
+          @touchstart="handleTouchStart"
+          @touchend="handleTouchEnd"
+          class="relative group touch-manipulation"
+          type="button"
         >
           <div
             :class="[
-              'p-3 rounded-full transition-all duration-300 ease-in-out',
-              recording ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-200 hover:bg-gray-300',
+              'p-3 rounded-full transition-all duration-300 ease-in-out transform',
+              recording ? 'bg-red-600 scale-110' : 'bg-gray-200',
               'relative z-10'
             ]"
           >
@@ -55,27 +56,38 @@
                 'h-7 w-7 transition-colors duration-300',
                 recording ? 'text-white' : 'text-gray-700'
               ]" 
-              fill="none" 
-              viewBox="0 0 24 24" 
+              viewBox="0 0 24 24"
+              fill="none"
               stroke="currentColor"
             >
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              <path 
+                stroke-linecap="round" 
+                stroke-linejoin="round" 
+                stroke-width="2" 
+                d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"
+              />
+              <path 
+                stroke-linecap="round" 
+                stroke-linejoin="round" 
+                stroke-width="2" 
+                d="M19 10v2a7 7 0 01-14 0v-2M12 18.5V23"
+              />
             </svg>
           </div>
-          <!-- Animated recording indicator -->
           <div
             v-if="recording"
             class="absolute -inset-1 bg-red-100 rounded-full animate-pulse z-0"
           ></div>
-          <!-- Tooltip -->
           <span
-            class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-sm text-white bg-gray-800 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+            :class="[
+              'absolute -bottom-6 left-1/2 transform -translate-x-1/2 text-xs',
+              recording ? 'text-red-600' : 'text-gray-500'
+            ]"
           >
-            {{ recording ? 'Stop Recording' : 'Start Recording' }}
+            {{ recording ? 'Recording...' : '' }}
           </span>
         </button>
 
-        <!-- Rest of the buttons remain the same -->
         <button
           @click="captureImage"
           class="bg-red-600 hover:bg-red-700 text-white font-bold p-3 rounded-full transition-all duration-300 ease-in-out"
@@ -103,7 +115,6 @@
         </button>
       </div>
 
-      <!-- Input area remains the same -->
       <div class="flex">
         <input
           v-model="userInput"
@@ -144,36 +155,54 @@ const userInput = ref('')
 const { messages, isPaused } = store
 const fileInput = ref(null)
 const recording = ref(false)
+const recognition = ref(null)
+const isRecognitionSupported = ref(false)
+const touchTimeout = ref(null)
+const microphoneInitialized = ref(false)
 
 const { coords, resume, pause } = useGeolocation()
 
-const recognition = ref(null)
-const isRecognitionSupported = ref(false)
-
 onMounted(() => {
   resume()
-  checkSpeechRecognitionSupport()
+  initializeSpeechRecognition()
 })
 
 onUnmounted(() => {
   pause()
   stopRecognition()
+  if (touchTimeout.value) {
+    clearTimeout(touchTimeout.value)
+  }
 })
 
-const checkSpeechRecognitionSupport = () => {
-  if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+const initializeSpeechRecognition = () => {
+  const SpeechRecognition = window.SpeechRecognition || 
+                           window.webkitSpeechRecognition || 
+                           window.mozSpeechRecognition || 
+                           window.msSpeechRecognition
+
+  if (SpeechRecognition) {
     isRecognitionSupported.value = true
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     recognition.value = new SpeechRecognition()
-    recognition.value.continuous = true
+    
+    recognition.value.continuous = false
     recognition.value.interimResults = true
+    recognition.value.lang = 'en-US'
 
     recognition.value.onstart = () => {
       recording.value = true
+      microphoneInitialized.value = true
     }
 
     recognition.value.onend = () => {
       recording.value = false
+      if (recording.value) {
+        try {
+          recognition.value.start()
+        } catch (e) {
+          console.warn('Could not restart recording:', e)
+        }
+      }
     }
 
     recognition.value.onresult = (event) => {
@@ -181,53 +210,94 @@ const checkSpeechRecognitionSupport = () => {
       if (result.isFinal) {
         userInput.value = result[0].transcript
         sendMessage()
+        stopRecognition()
       }
     }
 
     recognition.value.onerror = (event) => {
       console.error('Speech recognition error:', event.error)
+      if (event.error === 'not-allowed') {
+        alert('Please allow microphone access to use speech recognition.')
+      }
       stopRecognition()
     }
   }
 }
 
-const toggleRecording = () => {
+const handleMicrophoneClick = async () => {
   if (!isRecognitionSupported.value) {
     alert('Speech recognition is not supported in your browser.')
     return
   }
 
-  if (recording.value) {
-    stopRecognition()
-  } else {
-    startRecognition()
+  try {
+    if (!microphoneInitialized.value) {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.getTracks().forEach(track => track.stop())
+      microphoneInitialized.value = true
+    }
+
+    if (recording.value) {
+      stopRecognition()
+    } else {
+      startRecognition()
+    }
+  } catch (error) {
+    console.error('Microphone access error:', error)
+    alert('Please allow microphone access to use speech recognition.')
   }
 }
 
-const startRecognition = () => {
-  if (recognition.value) {
-    try {
-      recognition.value.start()
-    } catch (error) {
-      if (error.name === 'NotAllowedError') {
-        alert('Please allow microphone access to use speech recognition.')
-      } else {
-        console.error('Speech recognition error:', error)
-      }
+const handleTouchStart = (event) => {
+  event.preventDefault()
+  if (!recording.value) {
+    touchTimeout.value = setTimeout(() => {
+      handleMicrophoneClick()
+    }, 150)
+  }
+}
+
+const handleTouchEnd = (event) => {
+  event.preventDefault()
+  if (touchTimeout.value) {
+    clearTimeout(touchTimeout.value)
+  }
+  if (recording.value) {
+    stopRecognition()
+  }
+}
+
+const startRecognition = async () => {
+  if (!recognition.value) {
+    initializeSpeechRecognition()
+  }
+
+  try {
+    await recognition.value.start()
+  } catch (error) {
+    if (error.name === 'NotAllowedError') {
+      alert('Please allow microphone access to use speech recognition.')
+    } else {
+      console.error('Speech recognition error:', error)
     }
+    recording.value = false
   }
 }
 
 const stopRecognition = () => {
-  if (recognition.value) {
-    recognition.value.stop()
+  try {
+    if (recognition.value) {
+      recognition.value.stop()
+      recording.value = false
+    }
+  } catch (error) {
+    console.error('Error stopping recognition:', error)
   }
 }
 
 const sendMessage = () => {
   if (userInput.value.trim()) {
     store.addMessage({ text: userInput.value, isUser: true })
-    // Simulate API call to backend
     setTimeout(() => {
       store.addMessage({
         text: `Response to: ${userInput.value}`,
@@ -253,7 +323,6 @@ const onImageCapture = (event) => {
         isUser: true,
         image: imageDataUrl,
       })
-      // Simulate API call to backend for image processing
       setTimeout(() => {
         store.addMessage({
           text: 'This image shows a beautiful landmark.',
@@ -274,14 +343,12 @@ const togglePause = () => {
   }
 }
 
-// Simulate location updates
 setInterval(() => {
   if (!isPaused && coords.value) {
     store.setCurrentLocation({
       latitude: coords.value.latitude,
       longitude: coords.value.longitude,
     })
-    // Simulate backend response based on new location
     store.addMessage({
       text: `You are now at ${coords.value.latitude.toFixed(
         4
@@ -289,7 +356,7 @@ setInterval(() => {
       isUser: false,
     })
   }
-}, 30000) // Update every 30 seconds
+}, 30000)
 </script>
 
 <style scoped>
