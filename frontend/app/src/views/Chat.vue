@@ -1,11 +1,11 @@
 <template>
   <div class="flex flex-col h-screen bg-white">
-    <!-- Header remains the same -->
+    <!-- Header remains unchanged -->
     <header class="bg-white text-gray-800 p-6 shadow-lg rounded-b-3xl">
       <h1 class="text-3xl font-extrabold text-center text-red-600">AI Tour Guide</h1>
     </header>
 
-    <!-- Main content remains the same -->
+    <!-- Main content with updated message display -->
     <main class="flex-grow overflow-y-auto p-6 space-y-6">
       <div v-if="messages.length === 0" class="flex items-center justify-center h-full">
         <div class="text-center text-gray-800 space-y-4">
@@ -20,11 +20,20 @@
       <div v-for="(message, index) in messages" :key="index" class="animate-fade-in-up">
         <div
           :class="[
-            'p-4 rounded-xl max-w-4/5 shadow-lg',
+            'p-4 rounded-xl max-w-4/5 shadow-lg flex items-center justify-between',
             message.isUser ? 'bg-gray-100 text-gray-800 ml-auto' : 'bg-red-50 text-gray-800',
           ]"
         >
-          {{ message.text }}
+          <span>{{ message.text }}</span>
+          <button
+            v-if="!message.isUser"
+            @click="replayAudio(message.text)"
+            class="ml-2 p-2 rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors duration-300"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+            </svg>
+          </button>
         </div>
         <img
           v-if="message.image"
@@ -34,7 +43,6 @@
         />
       </div>
     </main>
-
     <!-- Updated footer with improved microphone button -->
     <footer class="bg-white border-t border-gray-300 p-6 rounded-t-3xl">
       <div class="flex items-center justify-between mb-4">
@@ -138,6 +146,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '../store'
 import { useGeolocation } from '@vueuse/core'
+import { getTextResponse, getSpeechResponse, getImageDescription, getLocationDescription } from '../MockApi'
 
 const store = useAppStore()
 const userInput = ref('')
@@ -150,6 +159,10 @@ const { coords, resume, pause } = useGeolocation()
 const recognition = ref(null)
 const isRecognitionSupported = ref(false)
 
+// Text-to-speech
+const synth = window.speechSynthesis
+const utterance = ref(null)
+
 onMounted(() => {
   resume()
   checkSpeechRecognitionSupport()
@@ -158,7 +171,9 @@ onMounted(() => {
 onUnmounted(() => {
   pause()
   stopRecognition()
+  stopSpeech()
 })
+
 
 const checkSpeechRecognitionSupport = () => {
   if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -176,11 +191,20 @@ const checkSpeechRecognitionSupport = () => {
       recording.value = false
     }
 
-    recognition.value.onresult = (event) => {
+    recognition.value.onresult = async (event) => {
       const result = event.results[event.results.length - 1]
       if (result.isFinal) {
-        userInput.value = result[0].transcript
-        sendMessage()
+        const speech = result[0].transcript
+        store.addMessage({ text: speech, isUser: true })
+
+        try {
+          const botResponse = await getSpeechResponse(speech)
+          store.addMessage({ text: botResponse.message, isUser: false })
+          speakText(botResponse.message)
+        } catch (error) {
+          store.addMessage({ text: "Speech recognition failed.", isUser: false })
+          console.error("Speech recognition error:", error)
+        }
       }
     }
 
@@ -224,17 +248,20 @@ const stopRecognition = () => {
   }
 }
 
-const sendMessage = () => {
+const sendMessage = async () => {
   if (userInput.value.trim()) {
-    store.addMessage({ text: userInput.value, isUser: true })
-    // Simulate API call to backend
-    setTimeout(() => {
-      store.addMessage({
-        text: `Response to: ${userInput.value}`,
-        isUser: false,
-      })
-    }, 1000)
+    const messageText = userInput.value.trim()
     userInput.value = ''
+    store.addMessage({ text: messageText, isUser: true })
+
+    try {
+      const response = await getTextResponse(messageText)
+      store.addMessage({ text: response.message, isUser: false })
+      speakText(response.message)
+    } catch (error) {
+      store.addMessage({ text: "Error getting response.", isUser: false })
+      console.error("Error getting response:", error)
+    }
   }
 }
 
@@ -242,25 +269,34 @@ const captureImage = () => {
   fileInput.value.click()
 }
 
-const onImageCapture = (event) => {
+const onImageCapture = async (event) => {
   const file = event.target.files[0]
   if (file) {
     const reader = new FileReader()
-    reader.onload = (e) => {
+
+    reader.onload = async (e) => {
       const imageDataUrl = e.target.result
       store.addMessage({
         text: 'Image captured',
         isUser: true,
         image: imageDataUrl,
       })
-      // Simulate API call to backend for image processing
-      setTimeout(() => {
-        store.addMessage({
-          text: 'This image shows a beautiful landmark.',
-          isUser: false,
-        })
-      }, 1500)
+
+      try {
+        const response = await getImageDescription(imageDataUrl)
+        store.addMessage({ text: response.message, isUser: false })
+        speakText(response.message)
+      } catch (error) {
+        store.addMessage({ text: "Error processing image.", isUser: false })
+        console.error("Image processing error:", error)
+      }
     }
+
+    reader.onerror = () => {
+      console.error("File reading error.")
+      store.addMessage({ text: "Failed to read image file.", isUser: false })
+    }
+
     reader.readAsDataURL(file)
   }
 }
@@ -274,20 +310,35 @@ const togglePause = () => {
   }
 }
 
-// Simulate location updates
-setInterval(() => {
+const speakText = (text) => {
+  stopSpeech()
+  utterance.value = new SpeechSynthesisUtterance(text)
+  synth.speak(utterance.value)
+}
+
+const stopSpeech = () => {
+  if (synth.speaking) {
+    synth.cancel()
+  }
+}
+
+const replayAudio = (text) => {
+  speakText(text)
+}
+
+setInterval(async () => {
   if (!isPaused && coords.value) {
     store.setCurrentLocation({
       latitude: coords.value.latitude,
       longitude: coords.value.longitude,
     })
-    // Simulate backend response based on new location
-    store.addMessage({
-      text: `You are now at ${coords.value.latitude.toFixed(
-        4
-      )}, ${coords.value.longitude.toFixed(4)}. There's an interesting landmark nearby.`,
-      isUser: false,
-    })
+    try {
+      const response = await getLocationDescription(coords.value.latitude, coords.value.longitude)
+      store.addMessage({ text: response.message, isUser: false })
+      speakText(response.message)
+    } catch (error) {
+      console.error("Error getting location description:", error)
+    }
   }
 }, 30000) // Update every 30 seconds
 </script>
