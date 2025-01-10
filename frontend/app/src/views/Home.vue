@@ -3,13 +3,13 @@
       <h1 class="text-4xl font-bold mb-8">SG Buddy</h1>
       <router-link
         to="/chat"
-        class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded mb-4"
+        class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded mb-4"
       >
         Start Tour
       </router-link>
       <router-link
         to="/history"
-        class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded"
+        class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded"
       >
         View Travel Journal!
       </router-link>

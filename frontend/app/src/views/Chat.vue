@@ -99,112 +99,162 @@
   </template>
   
   
-  <script setup>
-  import { ref, onMounted, onUnmounted } from 'vue'
-  import { useAppStore } from '../store'
-  import { useGeolocation } from '@vueuse/core'
-  
-  const store = useAppStore()
-  const userInput = ref('')
-  const { messages, isRecording, isPaused } = store
-  const fileInput = ref(null)
-  
-  const { coords, resume, pause } = useGeolocation()
-  
-  onMounted(() => {
-    resume()
-  })
-  
-  onUnmounted(() => {
-    pause()
-  })
-  
-  const sendMessage = () => {
-    if (userInput.value.trim()) {
-      store.addMessage({ text: userInput.value, isUser: true })
-      // Simulate API call to backend
-      setTimeout(() => {
-        store.addMessage({
-          text: `Response to: ${userInput.value}`,
-          isUser: false,
-        })
-      }, 1000)
-      userInput.value = ''
-    }
-  }
-  
-  const toggleRecording = () => {
-    store.setRecording(!isRecording)
-    // Implement actual recording logic here
-  }
-  
-  const captureImage = () => {
-    fileInput.value.click()
-  }
-  
-  const onImageCapture = (event) => {
-    const file = event.target.files[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        const imageDataUrl = e.target.result
-        store.addMessage({
-          text: 'Image captured',
-          isUser: true,
-          image: imageDataUrl,
-        })
-        // Simulate API call to backend for image processing
-        setTimeout(() => {
-          store.addMessage({
-            text: 'This image shows a beautiful landmark.',
-            isUser: false,
-          })
-        }, 1500)
+  ```vue
+<script setup>
+import { ref, onMounted, onUnmounted } from 'vue'
+import { useAppStore } from '../store'
+import { useGeolocation } from '@vueuse/core'
+
+const store = useAppStore()
+const userInput = ref('')
+const { messages, isRecording, isPaused } = store
+const fileInput = ref(null)
+
+const { coords, resume, pause } = useGeolocation()
+
+const recognition = ref(null)
+const isRecognitionSupported = ref(false)
+
+onMounted(() => {
+  resume()
+  checkSpeechRecognitionSupport()
+})
+
+onUnmounted(() => {
+  pause()
+  stopRecognition()
+})
+
+const checkSpeechRecognitionSupport = () => {
+  if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    isRecognitionSupported.value = true
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    recognition.value = new SpeechRecognition()
+    recognition.value.continuous = true
+    recognition.value.interimResults = true
+
+    recognition.value.onresult = (event) => {
+      const result = event.results[event.results.length - 1]
+      if (result.isFinal) {
+        userInput.value = result[0].transcript
+        sendMessage()
       }
-      reader.readAsDataURL(file)
+    }
+
+    recognition.value.onerror = (event) => {
+      console.error('Speech recognition error:', event.error)
+      stopRecognition()
     }
   }
-  
-  const togglePause = () => {
-    store.setPaused(!isPaused)
-    if (isPaused) {
-      resume()
-    } else {
-      pause()
-    }
+}
+
+const startRecognition = () => {
+  if (isRecognitionSupported.value && recognition.value) {
+    recognition.value.start()
   }
-  
-  // Simulate location updates
-  setInterval(() => {
-    if (!isPaused && coords.value) {
-      store.setCurrentLocation({
-        latitude: coords.value.latitude,
-        longitude: coords.value.longitude,
-      })
-      // Simulate backend response based on new location
+}
+
+const stopRecognition = () => {
+  if (isRecognitionSupported.value && recognition.value) {
+    recognition.value.stop()
+  }
+}
+
+const sendMessage = () => {
+  if (userInput.value.trim()) {
+    store.addMessage({ text: userInput.value, isUser: true })
+    // Simulate API call to backend
+    setTimeout(() => {
       store.addMessage({
-        text: `You are now at ${coords.value.latitude.toFixed(
-          4
-        )}, ${coords.value.longitude.toFixed(4)}. There's an interesting landmark nearby.`,
+        text: `Response to: ${userInput.value}`,
         isUser: false,
       })
-    }
-  }, 30000) // Update every 30 seconds
-  </script>
-  
-  <style scoped>
-  .animate-fade-in-up {
-    animation: fadeInUp 0.5s ease-out;
+    }, 1000)
+    userInput.value = ''
   }
+}
 
-  @keyframes fadeInUp {
-    from {
-      opacity: 0;
-      transform: translateY(15px);
+const toggleRecording = () => {
+  if (isRecognitionSupported.value) {
+    if (isRecording) {
+      stopRecognition()
+    } else {
+      startRecognition()
     }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    store.setRecording(!isRecording)
+  } else {
+    alert('Speech recognition is not supported in your browser.')
   }
+}
+
+const captureImage = () => {
+  fileInput.value.click()
+}
+
+const onImageCapture = (event) => {
+  const file = event.target.files[0]
+  if (file) {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const imageDataUrl = e.target.result
+      store.addMessage({
+        text: 'Image captured',
+        isUser: true,
+        image: imageDataUrl,
+      })
+      // Simulate API call to backend for image processing
+      setTimeout(() => {
+        store.addMessage({
+          text: 'This image shows a beautiful landmark.',
+          isUser: false,
+        })
+      }, 1500)
+    }
+    reader.readAsDataURL(file)
+  }
+}
+
+const togglePause = () => {
+  store.setPaused(!isPaused)
+  if (isPaused) {
+    resume()
+  } else {
+    pause()
+  }
+}
+
+// Simulate location updates
+setInterval(() => {
+  if (!isPaused && coords.value) {
+    store.setCurrentLocation({
+      latitude: coords.value.latitude,
+      longitude: coords.value.longitude,
+    })
+    // Simulate backend response based on new location
+    store.addMessage({
+      text: `You are now at ${coords.value.latitude.toFixed(
+        4
+      )}, ${coords.value.longitude.toFixed(4)}. There's an interesting landmark nearby.`,
+      isUser: false,
+    })
+  }
+}, 30000) // Update every 30 seconds
+</script>
+
+<style scoped>
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(15px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 </style>
+```
