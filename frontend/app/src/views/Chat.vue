@@ -1,11 +1,9 @@
 <template>
   <div class="flex flex-col h-screen bg-white">
-    <!-- Header remains unchanged -->
     <header class="bg-white text-gray-800 p-6 shadow-lg rounded-b-3xl">
       <h1 class="text-3xl font-extrabold text-center text-red-600">AI Tour Guide</h1>
     </header>
 
-    <!-- Main content with updated message display -->
     <main class="flex-grow overflow-y-auto p-6 space-y-6">
       <div v-if="messages.length === 0" class="flex items-center justify-center h-full">
         <div class="text-center text-gray-800 space-y-4">
@@ -43,7 +41,6 @@
         />
       </div>
     </main>
-    <!-- Updated footer with improved microphone button -->
     <footer class="bg-white border-t border-gray-300 p-6 rounded-t-3xl">
       <div class="flex items-center justify-between mb-4">
         <button
@@ -70,12 +67,11 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
             </svg>
           </div>
-          <!-- Animated recording indicator -->
           <div
             v-if="recording"
             class="absolute -inset-1 bg-red-100 rounded-full animate-pulse z-0"
           ></div>
-          <!-- Tooltip -->
+
           <span
             class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-sm text-white bg-gray-800 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200"
           >
@@ -83,7 +79,7 @@
           </span>
         </button>
 
-        <!-- Rest of the buttons remain the same -->
+
         <button
           @click="captureImage"
           class="bg-red-600 hover:bg-red-700 text-white font-bold p-3 rounded-full transition-all duration-300 ease-in-out"
@@ -111,7 +107,6 @@
         </button>
       </div>
 
-      <!-- Input area remains the same -->
       <div class="flex">
         <input
           v-model="userInput"
@@ -146,7 +141,8 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '../store'
 import { useGeolocation } from '@vueuse/core'
-import { getTextResponse, getSpeechResponse, getImageDescription, getLocationDescription } from '../MockApi'
+// import { getTextResponse, getSpeechResponse, getImageDescription, getLocationDescription } from '../MockApi'
+import imageCompression from 'browser-image-compression'
 
 const store = useAppStore()
 const userInput = ref('')
@@ -158,22 +154,31 @@ const { coords, resume, pause } = useGeolocation()
 
 const recognition = ref(null)
 const isRecognitionSupported = ref(false)
-
-// Text-to-speech
 const synth = window.speechSynthesis
 const utterance = ref(null)
+
+//for visited places 
+const visitedPlaces = ref([])
 
 onMounted(() => {
   resume()
   checkSpeechRecognitionSupport()
+  const storedPlaces = JSON.parse(sessionStorage.getItem('visitedPlaces')) || []
+  visitedPlaces.value = storedPlaces
 })
+
+const updateVisitedPlaces = (newPlace) => {
+  if (!visitedPlaces.value.includes(newPlace)) {
+    visitedPlaces.value.push(newPlace) // Update the reactive array
+    sessionStorage.setItem('visitedPlaces', JSON.stringify(visitedPlaces.value)) // Save to sessionStorage
+  }
+}
 
 onUnmounted(() => {
   pause()
   stopRecognition()
   stopSpeech()
 })
-
 
 const checkSpeechRecognitionSupport = () => {
   if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -196,14 +201,36 @@ const checkSpeechRecognitionSupport = () => {
       if (result.isFinal) {
         const speech = result[0].transcript
         store.addMessage({ text: speech, isUser: true })
-
         try {
-          const botResponse = await getSpeechResponse(speech)
-          store.addMessage({ text: botResponse.message, isUser: false })
-          speakText(botResponse.message)
+          const latitude = coords.value.latitude
+          const longitude = coords.value.longitude
+          const location = `${latitude},${longitude}`
+
+          const payload = {
+            text: speech,
+            location: location,
+          }
+          console.log(location)
+
+          const response = await fetch('https://ggdotcom.onrender.com/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          })
+
+          if (!response.ok) {
+            throw new Error('Failed to get response from backend')
+          }
+
+          const data = await response.json()
+          store.addMessage({ text: data.response, isUser: false })
+          speakText(data.response)
+
         } catch (error) {
-          store.addMessage({ text: "Speech recognition failed.", isUser: false })
-          console.error("Speech recognition error:", error)
+          store.addMessage({ text: "Error getting response.", isUser: false })
+          console.error("Error getting response:", error)
         }
       }
     }
@@ -255,9 +282,40 @@ const sendMessage = async () => {
     store.addMessage({ text: messageText, isUser: true })
 
     try {
-      const response = await getTextResponse(messageText)
-      store.addMessage({ text: response.message, isUser: false })
-      speakText(response.message)
+      const latitude = coords.value.latitude
+      const longitude = coords.value.longitude
+      const location = `${latitude},${longitude}`
+      console.log(location)
+      console.log(`Visited Places are ${visitedPlaces.value}`)
+
+      const payload = {
+        text: messageText,
+        location: location,
+        visitedPlaces: visitedPlaces.value, 
+      }
+
+      const response = await fetch('https://ggdotcom.onrender.com/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to get response from backend')
+      }
+
+      const data = await response.json()
+
+      // Process the response and update visitedPlaces
+      console.log(data.response)
+      store.addMessage({ text: data.response, isUser: false })
+      speakText(data.response)
+
+      if (data.location) {
+        updateVisitedPlaces(data.location) // Update visited places with new location
+      }
     } catch (error) {
       store.addMessage({ text: "Error getting response.", isUser: false })
       console.error("Error getting response:", error)
@@ -265,41 +323,109 @@ const sendMessage = async () => {
   }
 }
 
+
+// handling images
 const captureImage = () => {
   fileInput.value.click()
 }
 
-const onImageCapture = async (event) => {
-  const file = event.target.files[0]
-  if (file) {
-    const reader = new FileReader()
+const getImageDescription = async (imageDataUrl, location) => {
+  try {
+    console.log(imageDataUrl);
+    console.log(location)
 
-    reader.onload = async (e) => {
-      const imageDataUrl = e.target.result
-      store.addMessage({
-        text: 'Image captured',
-        isUser: true,
-        image: imageDataUrl,
-      })
+    const payload = {
+      image: imageDataUrl,
+      location: location,
+    };
 
-      try {
-        const response = await getImageDescription(imageDataUrl)
-        store.addMessage({ text: response.message, isUser: false })
-        speakText(response.message)
-      } catch (error) {
-        store.addMessage({ text: "Error processing image.", isUser: false })
-        console.error("Image processing error:", error)
-      }
+    const response = await fetch('https://ggdotcom.onrender.com/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error('Error sending image to backend');
     }
 
-    reader.onerror = () => {
-      console.error("File reading error.")
-      store.addMessage({ text: "Failed to read image file.", isUser: false })
-    }
+    const data = await response.json();
 
-    reader.readAsDataURL(file)
+    console.log('Response from backend:', data);
+
+    return data;
+  } catch (error) {
+    console.error('Error during image description fetch:', error);
+    return { message: 'Error processing image' };
   }
-}
+};
+
+
+
+const onImageCapture = async (event) => {
+  const file = event.target.files[0];
+  if (file) {
+    try {
+      // Compress the image before sending
+      const options = {
+        maxSizeMB: 0.75,
+        maxWidthOrHeight: 1024,
+        useWebWorker: true,
+      };
+      const compressedFile = await imageCompression(file, options);
+
+      const reader = new FileReader();
+
+      reader.onload = async (e) => {
+        const imageDataUrl = e.target.result;
+
+        // Get the user's current location
+        const latitude = coords.value.latitude;
+        const longitude = coords.value.longitude;
+        const location = `${latitude},${longitude}`;
+
+        // Add a message for the image capture
+        store.addMessage({
+          text: 'Image captured and compressed',
+          isUser: true,
+          image: imageDataUrl,
+        });
+
+        try {
+          // Send the compressed image and location to the backend
+          const response = await getImageDescription(imageDataUrl, location);
+
+          // Log the backend response for debugging
+          console.log('Backend response:', response);
+
+          // Add the response message to the store
+          store.addMessage({ text: response.response, isUser: false });
+
+          console.log(`response is ${response.response}`)
+          // Convert the message text to speech
+          speakText(response.response);
+        } catch (error) {
+          store.addMessage({ text: "Error processing image.", isUser: false });
+          console.error("Image processing error:", error);
+        }
+      };
+
+      reader.onerror = () => {
+        console.error("File reading error.");
+        store.addMessage({ text: "Failed to read image file.", isUser: false });
+      };
+
+      reader.readAsDataURL(compressedFile); // Read the compressed file as a data URL
+    } catch (error) {
+      console.error("Compression error:", error);
+      store.addMessage({ text: "Error compressing image.", isUser: false });
+    }
+  }
+};
+
+
 
 const togglePause = () => {
   store.setPaused(!isPaused)
@@ -326,21 +452,21 @@ const replayAudio = (text) => {
   speakText(text)
 }
 
-setInterval(async () => {
-  if (!isPaused && coords.value) {
-    store.setCurrentLocation({
-      latitude: coords.value.latitude,
-      longitude: coords.value.longitude,
-    })
-    try {
-      const response = await getLocationDescription(coords.value.latitude, coords.value.longitude)
-      store.addMessage({ text: response.message, isUser: false })
-      speakText(response.message)
-    } catch (error) {
-      console.error("Error getting location description:", error)
-    }
-  }
-}, 30000) // Update every 30 seconds
+// setInterval(async () => {
+//   if (!isPaused && coords.value) {
+//     store.setCurrentLocation({
+//       latitude: coords.value.latitude,
+//       longitude: coords.value.longitude,
+//     })
+//     try {
+//       const response = await getLocationDescription(coords.value.latitude, coords.value.longitude)
+//       store.addMessage({ text: response.message, isUser: false })
+//       speakText(response.message)
+//     } catch (error) {
+//       console.error("Error getting location description:", error)
+//     }
+//   }
+// }, 30000) 
 </script>
 
 <style scoped>
